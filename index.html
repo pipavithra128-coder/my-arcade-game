@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polarity Drift</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0f1a;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      background: #141829;
+      border: 3px solid #2e3659;
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+    .controls {
+      margin-top: 14px;
+      font-size: 14px;
+      color: #94a3b8;
+      text-align: center;
+    }
+    span.key {
+      background: #1e253d;
+      border: 1px solid #3b466e;
+      padding: 2px 7px;
+      border-radius: 5px;
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="360" height="600"></canvas>
+  <div class="controls">
+    <span class="key">A / D</span> or <span class="key">← / →</span> Switch Lane &nbsp;|&nbsp;
+    <span class="key">Space</span> or <span class="key">Click</span> Flip Car Color
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const COLORS = {
+      cyan: { main: "#00f5d4", glow: "rgba(0, 245, 212, 0.4)" },
+      magenta: { main: "#ff2a85", glow: "rgba(255, 42, 133, 0.4)" },
+      wall: "#64748b"
+    };
+
+    const LANES = [115, 245];
+    let state = "START"; // START, PLAY, GAMEOVER
+    let score = 0;
+    let best = 0;
+    let speed = 5;
+    let roadOffset = 0;
+    let spawnTimer = 0;
+    let items = [];
+
+    const car = {
+      lane: 0,
+      x: LANES[0],
+      y: 480,
+      width: 44,
+      height: 76,
+      polarity: "cyan" // 'cyan' or 'magenta'
+    };
+
+    function resetGame() {
+      score = 0;
+      speed = 5;
+      items = [];
+      spawnTimer = 0;
+      car.lane = 0;
+      car.x = LANES[0];
+      car.polarity = "cyan";
+      state = "PLAY";
+    }
+
+    function flipPolarity() {
+      if (state !== "PLAY") return;
+      car.polarity = car.polarity === "cyan" ? "magenta" : "cyan";
+    }
+
+    function switchLane(dir) {
+      if (state !== "PLAY") return;
+      if (dir === "left") car.lane = 0;
+      if (dir === "right") car.lane = 1;
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "ArrowLeft" || e.code === "KeyA") switchLane("left");
+      if (e.code === "ArrowRight" || e.code === "KeyD") switchLane("right");
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (state === "PLAY") flipPolarity();
+        else resetGame();
+      }
+    });
+
+    canvas.addEventListener("click", () => {
+      if (state === "PLAY") flipPolarity();
+      else resetGame();
+    });
+
+    function spawnRow() {
+      const lane = Math.random() < 0.5 ? 0 : 1;
+      const roll = Math.random();
+
+      if (roll < 0.32) {
+        // Solid concrete barrier (must dodge by switching lanes)
+        items.push({ lane, y: -40, type: "wall", h: 26 });
+      } else {
+        // Energy gate (must match car polarity to pass through & score)
+        const polarity = Math.random() < 0.5 ? "cyan" : "magenta";
+        items.push({ lane, y: -40, type: "gate", polarity, h: 18, passed: false });
+      }
+    }
+
+    function update() {
+      if (state !== "PLAY") return;
+
+      roadOffset = (roadOffset + speed) % 40;
+      speed += 0.0018; // Gradually speeds up
+
+      // Smooth lane glide
+      const targetX = LANES[car.lane];
+      car.x += (targetX - car.x) * 0.22;
+
+      spawnTimer += speed;
+      if (spawnTimer > 195) {
+        spawnRow();
+        spawnTimer = 0;
+      }
+
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        item.y += speed;
+
+        // Collision check
+        const sameLane = Math.abs(car.x - LANES[item.lane]) < 35;
+        const hitY = item.y + item.h > car.y - car.height / 2 && item.y < car.y + car.height / 2;
+
+        if (sameLane && hitY) {
+          if (item.type === "wall") {
+            endGame();
+          } else if (item.type === "gate" && !item.passed) {
+            if (item.polarity === car.polarity) {
+              item.passed = true;
+              score += 10;
+            } else {
+              endGame();
+            }
+          }
+        }
+
+        if (item.y > canvas.height + 50) {
+          items.splice(i, 1);
+        }
+      }
+    }
+
+    function endGame() {
+      state = "GAMEOVER";
+      if (score > best) best = score;
+    }
+
+    function drawRoad() {
+      // Road shoulders
+      ctx.fillStyle = "#1e253d";
+      ctx.fillRect(35, 0, 10, canvas.height);
+      ctx.fillRect(canvas.width - 45, 0, 10, canvas.height);
+
+      // Center dashed divider
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 4;
+      ctx.setLineDash([22, 18]);
+      ctx.lineDashOffset = -roadOffset;
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, 0);
+      ctx.lineTo(canvas.width / 2, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function drawItems() {
+      for (const item of items) {
+        const x = LANES[item.lane];
+        if (item.type === "wall") {
+          ctx.fillStyle = COLORS.wall;
+          ctx.fillRect(x - 45, item.y, 90, item.h);
+          // Hazard stripes
+          ctx.fillStyle = "#eab308";
+          ctx.fillRect(x - 40, item.y + 6, 16, 14);
+          ctx.fillRect(x - 8, item.y + 6, 16, 14);
+          ctx.fillRect(x + 24, item.y + 6, 16, 14);
+        } else if (!item.passed) {
+          const c = COLORS[item.polarity];
+          ctx.shadowBlur = 16;
+          ctx.shadowColor = c.main;
+          ctx.fillStyle = c.main;
+          ctx.fillRect(x - 48, item.y, 96, item.h);
+          ctx.shadowBlur = 0;
+        }
+      }
+    }
+
+    function drawCar() {
+      const c = COLORS[car.polarity];
+      ctx.save();
+      ctx.translate(car.x, car.y);
+
+      // Neon underglow
+      ctx.shadowBlur = 22;
+      ctx.shadowColor = c.main;
+
+      // Car body
+      ctx.fillStyle = c.main;
+      ctx.beginPath();
+      ctx.roundRect(-car.width / 2, -car.height / 2, car.width, car.height, 10);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Windshield & cabin
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.roundRect(-15, -16, 30, 36, 6);
+      ctx.fill();
+
+      // Headlights
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-16, -car.height / 2 + 2, 8, 5);
+      ctx.fillRect(8, -car.height / 2 + 2, 8, 5);
+
+      ctx.restore();
+    }
+
+    function drawHUD() {
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 20px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText(`Score: ${score}`, 55, 36);
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "16px system-ui";
+      ctx.fillText(`Best: ${best}`, canvas.width - 55, 36);
+
+      if (state === "START" || state === "GAMEOVER") {
+        ctx.fillStyle = "rgba(13, 15, 26, 0.82)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#00f5d4";
+        ctx.font = "bold 32px system-ui";
+        ctx.fillText(state === "START" ? "POLARITY DRIFT" : "CRASHED!", canvas.width / 2, 230);
+
+        ctx.fillStyle = "#e2e8f0";
+        ctx.font = "15px system-ui";
+        ctx.fillText("Match your car's color to pass gates.", canvas.width / 2, 275);
+        ctx.fillText("Dodge gray concrete barriers!", canvas.width / 2, 300);
+
+        if (state === "GAMEOVER") {
+          ctx.fillStyle = "#ff2a85";
+          ctx.font = "bold 22px system-ui";
+          ctx.fillText(`Final Score: ${score}`, canvas.width / 2, 345);
+        }
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 16px system-ui";
+        ctx.fillText("Press SPACE or CLICK to Drive", canvas.width / 2, 400);
+      }
+    }
+
+    function loop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawRoad();
+      update();
+      drawItems();
+      drawCar();
+      drawHUD();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
